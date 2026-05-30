@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emma's Briefing | 晨間智能匯報</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f8f9fa; /* 極簡暖灰背景 */
+            color: #333333;
+        }
+        .glass-header {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+        }
+        /* 莫蘭迪色系標籤 */
+        .tag-labor { background-color: #d8a499; color: white; }
+        .tag-kh { background-color: #aebfb5; color: white; }
+        .tag-default { background-color: #b5c4d6; color: white; }
+    </style>
+</head>
+<body class="antialiased min-h-screen pb-12">
+
+    <!-- 導覽列 -->
+    <header class="glass-header sticky top-0 z-50 px-6 py-4 flex justify-between items-center">
+        <div class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" onclick="showHome()">
+            <i data-lucide="coffee" class="text-gray-600"></i>
+            <h1 class="text-xl font-medium tracking-wide text-gray-800">Emma's <span class="font-light text-gray-500">Briefing</span></h1>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="showBookmarks()" class="flex items-center gap-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-full text-sm font-medium transition-colors shadow-sm hidden sm:flex">
+                <i data-lucide="bookmark" class="w-4 h-4 text-blue-500"></i>
+                <span>我的收藏</span>
+            </button>
+            <button onclick="fetchData()" id="refreshBtn" class="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 text-white px-5 py-2 rounded-full text-sm font-medium transition-colors shadow-sm">
+                <i data-lucide="refresh-cw" class="w-4 h-4" id="refreshIcon"></i>
+                <span>同步更新</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto mt-8 px-6">
+        
+        <!-- 錯誤提示區塊 (預設隱藏) -->
+        <div id="errorAlert" class="hidden mb-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-r-lg">
+            <div class="flex items-center">
+                <i data-lucide="alert-circle" class="text-red-400 mr-3"></i>
+                <p id="errorMsg" class="text-sm text-red-700 font-medium"></p>
+            </div>
+        </div>
+
+        <!-- AI 摘要區塊 (極簡白底風格) -->
+        <section id="aiSection" class="mb-10 transition-all duration-300">
+            <div class="flex items-center gap-2 mb-4">
+                <i data-lucide="sparkles" class="text-blue-500 w-5 h-5"></i>
+                <h2 class="text-lg font-medium text-gray-700">AI 晨間洞察</h2>
+            </div>
+            <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 relative overflow-hidden">
+                <div id="aiSummaryContainer" class="relative z-10 text-gray-600 leading-relaxed">
+                    <div class="flex items-center justify-center py-6 text-gray-400 gap-3">
+                        <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                        <span class="text-sm tracking-wide">等待點擊右上角「同步更新」以召喚 AI 幕僚...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 新聞追蹤區塊 -->
+        <section>
+            <div class="flex items-center gap-2 mb-4" id="newsHeader">
+                <i data-lucide="rss" class="text-gray-500 w-5 h-5" id="newsIcon"></i>
+                <h2 class="text-lg font-medium text-gray-700" id="newsTitle">焦點新聞追蹤</h2>
+            </div>
+            <div id="newsContainer" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                <!-- 預設載入中狀態 -->
+                <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center justify-center py-12 col-span-full text-gray-400">
+                    目前無資料，請點擊同步更新。
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // 初始化 Icons
+        lucide.createIcons();
+
+        // 綁定你專屬的 GAS 網址
+        const API_URL = "https://script.google.com/macros/s/AKfycbzZ_a8JQCMet74UYhnvxRoZaQ_SRMPHUtzSD8BGxaNP2U_0IkoxPNLZREpW2KQZRPIj/exec";
+
+        // 全域變數：儲存當前抓取到的新聞，方便收藏功能取用
+        let globalNews = [];
+
+        // 自動分類標籤功能
+        function getTagInfo(title) {
+            if (title.includes('勞') || title.includes('招募') || title.includes('政策')) {
+                return { text: '人資動態', class: 'tag-labor' };
+            } else if (title.includes('高雄') || title.includes('台積電') || title.includes('廠房')) {
+                return { text: '高雄經濟', class: 'tag-kh' };
+            } else {
+                return { text: '綜合要聞', class: 'tag-default' };
+            }
+        }
+
+        // 抓取資料主函數
+        async function fetchData() {
+            const refreshBtn = document.getElementById('refreshBtn');
+            const refreshIcon = document.getElementById('refreshIcon');
+            const newsContainer = document.getElementById('newsContainer');
+            const aiSummaryContainer = document.getElementById('aiSummaryContainer');
+            const errorAlert = document.getElementById('errorAlert');
+            const errorMsg = document.getElementById('errorMsg');
+
+            // 狀態切換：載入中
+            refreshBtn.disabled = true;
+            refreshIcon.classList.add('animate-spin');
+            errorAlert.classList.add('hidden');
+            
+            aiSummaryContainer.innerHTML = `
+                <div class="flex items-center justify-center py-6 text-gray-400 gap-3">
+                    <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                    <span class="text-sm tracking-wide">AI 幕僚正在閱讀並提煉重點，請稍候...</span>
+                </div>
+            `;
+            newsContainer.innerHTML = `
+                <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center justify-center py-12 col-span-full text-gray-400 gap-3">
+                    <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                    <span>資料庫同步中...</span>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+
+                // 錯誤處理
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                // 儲存至全域變數
+                globalNews = data.news;
+
+                // 渲染 AI 摘要
+                renderSummary(data.summary);
+                // 渲染新聞
+                renderNews(data.news);
+                
+                // 確保更新後回到首頁視角
+                showHome();
+
+            } catch (error) {
+                console.error('抓取失敗:', error);
+                errorAlert.classList.remove('hidden');
+                errorMsg.textContent = '系統提示：' + error.message;
+                aiSummaryContainer.innerHTML = '<div class="text-gray-400 py-4 text-center text-sm">無法生成摘要。請確認 GAS 部署狀態。</div>';
+                newsContainer.innerHTML = '<div class="text-gray-400 py-4 text-center text-sm w-full md:col-span-2">資料載入失敗，請稍後再試。</div>';
+            } finally {
+                refreshBtn.disabled = false;
+                refreshIcon.classList.remove('animate-spin');
+                lucide.createIcons();
+            }
+        }
+        
+        // 頁面載入時自動執行一次抓取
+        window.onload = fetchData;
+
+        // 渲染 AI 摘要
+        function renderSummary(summaryList) {
+            const container = document.getElementById('aiSummaryContainer');
+            if (!summaryList || summaryList.length === 0) {
+                container.innerHTML = '<div class="text-gray-400 py-4 text-sm text-center">今日新聞暫無重大變動，或 AI 連線異常。</div>';
+                return;
+            }
+
+            let html = '<ul class="space-y-4">';
+            summaryList.forEach((item, index) => {
+                html += `
+                    <li class="flex items-start gap-4">
+                        <div class="flex-shrink-0 w-6 h-6 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center text-xs font-bold mt-0.5">
+                            ${index + 1}
+                        </div>
+                        <div>
+                            <h3 class="text-gray-800 font-medium mb-1">${item.topic}</h3>
+                            <p class="text-sm text-gray-500 leading-relaxed">${item.content}</p>
+                        </div>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+        }
+
+        // 渲染新聞列表
+        function renderNews(newsList) {
+            const container = document.getElementById('newsContainer');
+            if (!newsList || newsList.length === 0) {
+                container.innerHTML = '<div class="text-gray-400 py-4 text-center w-full col-span-full">目前沒有相關新聞或收藏。</div>';
+                return;
+            }
+
+            // 取得目前的收藏清單，用來比對狀態
+            let saved = JSON.parse(localStorage.getItem('emma_bookmarks') || '[]');
+
+            let html = '';
+            newsList.forEach(news => {
+                const tag = getTagInfo(news.title);
+                const isSaved = saved.some(item => item.id === news.id);
+                const btnColor = isSaved ? 'text-blue-500' : 'text-gray-300';
+                const fillClass = isSaved ? 'fill-current' : '';
+
+                html += `
+                    <a href="${news.url}" target="_blank" class="flex flex-col h-full bg-white rounded-2xl p-5 shadow-sm border border-gray-100 card-hover group relative z-0">
+                        <div class="flex justify-between items-start mb-4 relative z-10">
+                            <span class="text-xs px-2.5 py-1 rounded-full ${tag.class} bg-opacity-90 tracking-wide">${tag.text}</span>
+                            <button class="hover:text-blue-500 transition-colors bg-white rounded-full p-1 -mr-1 -mt-1 ${btnColor}" onclick="handleBookmark(event, '${news.id}')">
+                                <i data-lucide="bookmark" class="w-4 h-4 ${fillClass}"></i>
+                            </button>
+                        </div>
+                        <h3 class="text-[15px] font-medium text-gray-800 leading-snug mb-4 group-hover:text-blue-600 transition-colors line-clamp-3">${news.title}</h3>
+                        <div class="flex items-center justify-between text-xs text-gray-400 mt-auto pt-4 border-t border-gray-50">
+                            <span class="flex items-center gap-1.5"><i data-lucide="clock" class="w-3.5 h-3.5"></i> ${news.time}</span>
+                            <span class="truncate max-w-[80px]">${news.source}</span>
+                        </div>
+                    </a>
+                `;
+            });
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        // --- 新增：收藏功能核心邏輯 ---
+        function handleBookmark(event, id) {
+            event.preventDefault(); // 阻止點擊按鈕時觸發外層的 <a> 連結跳轉
+            
+            let saved = JSON.parse(localStorage.getItem('emma_bookmarks') || '[]');
+            const btn = event.currentTarget;
+            const icon = btn.querySelector('i');
+            
+            const savedIndex = saved.findIndex(item => item.id === id);
+            
+            if (savedIndex > -1) {
+                // 已收藏 -> 執行移除
+                saved.splice(savedIndex, 1);
+                btn.classList.replace('text-blue-500', 'text-gray-300');
+                icon.classList.remove('fill-current');
+                
+                // 如果目前在「我的收藏」頁面，移除後直接更新畫面
+                if (document.getElementById('newsTitle').innerText === '我的收藏') {
+                    renderNews(saved);
+                }
+            } else {
+                // 未收藏 -> 執行加入
+                const newsItem = globalNews.find(item => item.id === id) || saved.find(item => item.id === id);
+                if (newsItem) {
+                    saved.push(newsItem);
+                    btn.classList.replace('text-gray-300', 'text-blue-500');
+                    icon.classList.add('fill-current');
+                }
+            }
+            
+            localStorage.setItem('emma_bookmarks', JSON.stringify(saved));
+        }
+
+        // --- 新增：視角切換控制 ---
+        function showBookmarks() {
+            document.getElementById('aiSection').classList.add('hidden');
+            document.getElementById('newsIcon').setAttribute('data-lucide', 'bookmark');
+            document.getElementById('newsIcon').classList.replace('text-gray-500', 'text-blue-500');
+            document.getElementById('newsTitle').innerText = '我的收藏';
+            
+            let saved = JSON.parse(localStorage.getItem('emma_bookmarks') || '[]');
+            renderNews(saved);
+        }
+
+        function showHome() {
+            document.getElementById('aiSection').classList.remove('hidden');
+            document.getElementById('newsIcon').setAttribute('data-lucide', 'rss');
+            document.getElementById('newsIcon').classList.replace('text-blue-500', 'text-gray-500');
+            document.getElementById('newsTitle').innerText = '焦點新聞追蹤';
+            
+            renderNews(globalNews);
+        }
+    </script>
+</body>
+</html>
